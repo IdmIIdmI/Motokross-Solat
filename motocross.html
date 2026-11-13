@@ -1,0 +1,510 @@
+
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>MOTOCROSS 2D - Litar Berliku</title>
+<style>
+*{box-sizing:border-box;touch-action:none}
+body{margin:0;background:#101820;color:white;font-family:Arial,sans-serif;overflow:hidden}
+#game{position:relative;width:100vw;height:100dvh;max-width:600px;margin:auto;background:#263b25;overflow:hidden}
+canvas{width:100%;height:100%;display:block}
+#hud{position:absolute;top:8px;left:8px;right:8px;display:flex;justify-content:space-between;gap:5px;pointer-events:none}
+.stat{background:#07131dcc;border:1px solid #ffffff55;border-radius:9px;padding:7px 9px;font-size:12px;font-weight:bold}
+#menu,#quiz,#over{position:absolute;inset:0;background:#07131dee;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center;z-index:5}
+h1{color:#ffd34d;text-shadow:0 3px 5px #000;font-size:30px;margin:8px}
+p{line-height:1.5}
+button{border:0;border-radius:12px;background:#ffbd31;color:#18202a;font-weight:bold;padding:12px 18px;font-size:15px;margin:5px}
+button:active{transform:scale(.96)}
+#controls{position:absolute;bottom:15px;left:0;right:0;display:flex;justify-content:space-between;align-items:end;padding:0 16px;z-index:3}
+#stick{width:112px;height:112px;border-radius:50%;border:2px solid #ffffff88;background:#ffffff22;position:relative}
+#knob{position:absolute;width:42px;height:42px;border-radius:50%;background:#ffffff99;left:33px;top:33px}
+.ctrl{width:65px;height:65px;border-radius:50%;background:#ffffff33;border:2px solid #ffffff99;color:white;font-size:12px}
+#actions{display:flex;gap:8px;align-items:end}
+#quiz{display:none;z-index:8}
+#quizBox{width:100%;max-width:420px;background:#162c3b;border:2px solid #f6c94a;border-radius:18px;padding:18px}
+.answer{display:block;width:100%;margin:8px 0;background:#e9f0f5;color:#14202a;text-align:left}
+#feedback{min-height:38px;color:#ffe17a;font-weight:bold}
+#upload{position:absolute;bottom:4px;left:4px;width:1px;height:1px;opacity:0}
+#uploadLabel{font-size:12px;color:#fff;background:#34495e;padding:9px 12px;border-radius:9px}
+.small{font-size:12px;color:#cbd5dc}
+</style>
+</head>
+<body>
+<div id="game">
+<canvas id="cv"></canvas>
+
+<div id="hud">
+ <div class="stat">❤️ <span id="lives">5</span></div>
+ <div class="stat">💰 <span id="money">0</span></div>
+ <div class="stat">🪙 <span id="gold">0</span></div>
+ <div class="stat">🏁 <span id="passed">0</span>/200</div>
+</div>
+
+<div id="controls">
+ <div id="stick"><div id="knob"></div></div>
+ <div id="actions">
+  <button class="ctrl" id="fire">TEMBAK</button>
+  <button class="ctrl" id="brake">BREK</button>
+ </div>
+</div>
+
+<div id="menu">
+ <h1>🏍️ MOTOCROSS 2D</h1>
+ <h2>LITAR BERLIKU</h2>
+ <p>200 halangan • 5 nyawa<br>20 bonus duit • 50 syiling emas<br>10 soalan wuduk • 20 soalan solat</p>
+ <label id="uploadLabel" for="upload">📷 PILIH GAMBAR WAJAH PENUNGGANG</label>
+ <input id="upload" type="file" accept="image/*">
+ <button id="start">MULA PERMAINAN</button>
+ <button id="musicBtn">🎵 MUZIK: ON</button>
+ <p class="small">Joystick: tukar lorong • TEMBAK: musnahkan halangan • BREK: perlahankan motosikal</p>
+</div>
+
+<div id="quiz">
+ <div id="quizBox">
+  <h2 id="quizTitle">SOALAN BONUS</h2>
+  <p id="question"></p>
+  <div id="answers"></div>
+  <div id="feedback"></div>
+  <button id="nextQ" style="display:none">TERUSKAN</button>
+ </div>
+</div>
+
+<div id="over" style="display:none">
+ <h1>PERMAINAN TAMAT</h1>
+ <p id="result"></p>
+ <button onclick="location.reload()">MAIN SEMULA</button>
+</div>
+</div>
+
+<script>
+"use strict";
+const canvas=document.getElementById("cv");
+const ctx=canvas.getContext("2d");
+const $=id=>document.getElementById(id);
+
+let W=0,H=0,DPR=1;
+function resize(){
+ DPR=Math.min(devicePixelRatio||1,2);
+ W=canvas.clientWidth; H=canvas.clientHeight;
+ canvas.width=Math.round(W*DPR);
+ canvas.height=Math.round(H*DPR);
+ ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener("resize",resize);
+resize();
+
+let running=false,paused=false;
+let lives=5,money=0,gold=0;
+let distance=0,speed=260,passed=0;
+let playerLane=1,steer=0;
+let obstacles=[],bullets=[],bonuses=[];
+let generated=0,bonusGenerated=0;
+let quizWudu=0,quizSolat=0;
+let invincible=0,lastTime=0;
+let faceImage=null;
+let musicOn=true,audio=null,musicTimer=null;
+let fireHeld=false,brakeHeld=false;
+let lastFire=0;
+const playerY=0.78;
+
+const laneGap=y=>W*0.205*(0.78+0.22*y);
+function curveAt(y){
+ return Math.sin(distance*0.0018+(1-y)*2.3)*W*0.12+
+        Math.sin(distance*0.0008+(1-y)*4.8)*W*0.035;
+}
+function roadCenter(y){
+ return W/2+curveAt(y)-curveAt(playerY);
+}
+function cameraOffset(){
+ return roadCenter(playerY)+(playerLane-1)*laneGap(playerY)-W/2;
+}
+function laneX(y,lane){
+ return roadCenter(y)+(lane-1)*laneGap(y)-cameraOffset();
+}
+function roadWidth(y){return laneGap(y)*3.15}
+
+function drawRoad(){
+ ctx.fillStyle="#34552d";ctx.fillRect(0,0,W,H);
+ for(let i=0;i<35;i++){
+  let x=(i*83+Math.floor(distance*.25))%(W+30);
+  let y=(i*137+distance*.7)%(H+20);
+  ctx.fillStyle=i%2?"#496b36":"#263f28";
+  ctx.beginPath();ctx.arc(x,y,5+(i%4),0,Math.PI*2);ctx.fill();
+ }
+ const strips=35;
+ for(let i=0;i<strips;i++){
+  let y1=i/strips*H,y2=(i+1)/strips*H;
+  let c1=roadCenter(y1),c2=roadCenter(y2);
+  let r1=roadWidth(y1)/2,r2=roadWidth(y2)/2;
+  ctx.fillStyle=i%2?"#55585b":"#626568";
+  ctx.beginPath();
+  ctx.moveTo(c1-r1,y1);ctx.lineTo(c1+r1,y1);
+  ctx.lineTo(c2+r2,y2);ctx.lineTo(c2-r2,y2);ctx.closePath();ctx.fill();
+  ctx.strokeStyle="#f5e9c8";ctx.lineWidth=2;
+  for(let l=0;l<4;l++){
+   let x1=c1-r1+l*(r1*2/3),x2=c2-r2+l*(r2*2/3);
+   if(l===0||l===3)continue;
+   ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+  }
+  if(i%2===0){
+   ctx.strokeStyle="#f5c342";ctx.lineWidth=4;
+   ctx.beginPath();ctx.moveTo(c1-r1,y1);ctx.lineTo(c2-r2,y2);ctx.stroke();
+   ctx.beginPath();ctx.moveTo(c1+r1,y1);ctx.lineTo(c2+r2,y2);ctx.stroke();
+  }
+ }
+}
+
+function drawBike(){
+ let x=W/2,y=H*playerY;
+ ctx.save();ctx.translate(x,y);
+ // bayang
+ ctx.fillStyle="#0007";ctx.beginPath();ctx.ellipse(0,23,25,12,0,0,Math.PI*2);ctx.fill();
+ // tayar
+ ctx.fillStyle="#101114";
+ ctx.beginPath();ctx.ellipse(0,18,10,24,0,0,Math.PI*2);ctx.fill();
+ ctx.beginPath();ctx.ellipse(0,-19,9,17,0,0,Math.PI*2);ctx.fill();
+ // badan motor
+ ctx.fillStyle="#e33a24";
+ ctx.beginPath();ctx.moveTo(-17,-15);ctx.lineTo(15,-14);ctx.lineTo(19,9);
+ ctx.lineTo(7,18);ctx.lineTo(-12,12);ctx.closePath();ctx.fill();
+ ctx.fillStyle="#ffcf35";
+ ctx.beginPath();ctx.moveTo(-12,-8);ctx.lineTo(12,-8);ctx.lineTo(8,4);ctx.lineTo(-9,5);ctx.fill();
+ // penunggang
+ ctx.fillStyle="#202c3d";
+ ctx.beginPath();ctx.ellipse(0,-30,12,17,-.1,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#f1b58a";
+ ctx.beginPath();ctx.arc(0,-48,10,0,Math.PI*2);ctx.fill();
+ // helmet
+ ctx.fillStyle="#f3c42f";
+ ctx.beginPath();ctx.arc(0,-51,12,Math.PI,Math.PI*2);ctx.lineTo(12,-47);
+ ctx.lineTo(-11,-47);ctx.fill();
+ if(faceImage){
+  ctx.save();ctx.beginPath();ctx.arc(0,-47,7,0,Math.PI*2);ctx.clip();
+  ctx.drawImage(faceImage,-8,-55,16,16);ctx.restore();
+ }
+ ctx.restore();
+}
+
+function drawObstacle(o){
+ let x=laneX(o.y,o.lane),y=o.y*H;
+ ctx.save();ctx.translate(x,y);
+ if(o.type==="BOM"){
+  ctx.fillStyle="#171717";ctx.beginPath();ctx.arc(0,0,13,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle="#f44";ctx.fillRect(-3,-18,6,7);
+  ctx.fillStyle="#fff";ctx.font="bold 12px Arial";ctx.fillText("!",-3,4);
+ }else if(o.type==="ROCK"){
+  ctx.fillStyle="#888";ctx.beginPath();ctx.moveTo(-16,9);ctx.lineTo(-12,-9);ctx.lineTo(2,-15);ctx.lineTo(16,-4);ctx.lineTo(13,10);ctx.closePath();ctx.fill();
+ }else if(o.type==="LOG"){
+  ctx.fillStyle="#8b5529";ctx.fillRect(-20,-8,40,16);
+  ctx.strokeStyle="#e0ad6a";ctx.strokeRect(-20,-8,40,16);
+ }else if(o.type==="TIRE"){
+  ctx.strokeStyle="#141414";ctx.lineWidth=8;ctx.beginPath();ctx.arc(0,0,13,0,Math.PI*2);ctx.stroke();
+ }else if(o.type==="PIT"){
+  ctx.fillStyle="#151515";ctx.beginPath();ctx.ellipse(0,0,23,12,0,0,Math.PI*2);ctx.fill();
+ }else{
+  ctx.fillStyle="#bd6c28";ctx.fillRect(-12,-15,24,30);
+  ctx.fillStyle="#f5bd6d";ctx.fillRect(-9,-12,18,5);
+ }
+ ctx.restore();
+}
+function drawBonus(b){
+ let x=laneX(b.y,b.lane),y=b.y*H;
+ ctx.save();ctx.translate(x,y);
+ ctx.fillStyle=b.type==="GOLD"?"#ffda36":b.type==="MONEY"?"#36d58b":"#51b8ff";
+ ctx.fillRect(-15,-15,30,30);
+ ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.strokeRect(-15,-15,30,30);
+ ctx.fillStyle="#10202a";ctx.font="bold 17px Arial";ctx.textAlign="center";
+ ctx.fillText(b.type==="QUIZ"?"?":b.type==="GOLD"?"50":"$",0,6);
+ ctx.restore();
+}
+function drawBullets(){
+ ctx.fillStyle="#fff36a";
+ bullets.forEach(b=>{
+  let x=laneX(b.y,b.lane);
+  ctx.beginPath();ctx.arc(x,b.y*H,4,0,Math.PI*2);ctx.fill();
+ });
+}
+
+const obstacleTypes=["BOM","ROCK","LOG","TIRE","PIT","BARREL"];
+function spawnObstacle(){
+ if(generated>=200)return;
+ let lane=Math.floor(Math.random()*3);
+ obstacles.push({lane,y:-.08,type:obstacleTypes[Math.floor(Math.random()*obstacleTypes.length)],hit:false});
+ generated++;
+}
+function spawnBonus(){
+ if(bonusGenerated>=21)return;
+ let lane=Math.floor(Math.random()*3);
+ let type=bonusGenerated===20?"GOLD":bonusGenerated<20?"MONEY":"QUIZ";
+ bonuses.push({lane,y:-.08,type,hit:false});
+ bonusGenerated++;
+}
+let obstacleClock=0,bonusClock=0;
+
+function update(dt){
+ if(!running||paused)return;
+ let actualSpeed=brakeHeld?speed*.48:speed;
+ distance+=actualSpeed*dt;
+ invincible=Math.max(0,invincible-dt);
+ obstacleClock+=dt;bonusClock+=dt;
+ if(obstacleClock>.62){spawnObstacle();obstacleClock=0}
+ if(bonusClock>3.2){spawnBonus();bonusClock=0}
+ obstacles.forEach(o=>o.y+=actualSpeed*dt/H*1.7);
+ bonuses.forEach(b=>b.y+=actualSpeed*dt/H*1.7);
+ bullets.forEach(b=>b.y-=dt*1.7);
+ obstacles=obstacles.filter(o=>o.y<1.15&&!o.hit);
+ bonuses=bonuses.filter(b=>b.y<1.15&&!b.hit);
+ bullets=bullets.filter(b=>b.y>-.1);
+ for(let o of obstacles){
+  if(o.y>.70&&o.y<.86&&o.lane===playerLane&&!o.hit){
+   if(invincible<=0){o.hit=true;loseLife()}
+  }
+  for(let b of bullets){
+   if(!o.hit&&o.lane===b.lane&&Math.abs(o.y-b.y)<.055){
+    o.hit=true;b.y=-1;passed++;break;
+   }
+  }
+ }
+ for(let b of bonuses){
+  if(b.y>.70&&b.y<.86&&b.lane===playerLane&&!b.hit){
+   b.hit=true;collectBonus(b);
+  }
+ }
+}
+function loseLife(){
+ lives--;invincible=1.5;
+ $("lives").textContent=lives;
+ explosion();
+ if(lives<=0)gameOver();
+}
+function collectBonus(b){
+ if(b.type==="MONEY"){money+=10;$("money").textContent=money;playTone(700,.12)}
+ if(b.type==="GOLD"){gold+=50;$("gold").textContent=gold;playTone(1000,.25)}
+ if(b.type==="QUIZ")openQuiz();
+}
+function gameOver(){
+ running=false;
+ $("over").style.display="flex";
+ $("result").textContent=`Duit: ${money} | Syiling emas: ${gold} | Halangan dimusnahkan: ${passed}`;
+}
+
+function shoot(){
+ if(!running||paused)return;
+ let now=performance.now();
+ if(now-lastFire<280)return;
+ lastFire=now;
+ bullets.push({lane:playerLane,y:playerY-.10});
+ playTone(480,.06);
+}
+$("fire").addEventListener("pointerdown",e=>{e.preventDefault();shoot();fireHeld=true});
+$("fire").addEventListener("pointerup",()=>fireHeld=false);
+$("fire").addEventListener("pointercancel",()=>fireHeld=false);
+$("brake").addEventListener("pointerdown",e=>{e.preventDefault();brakeHeld=true});
+["pointerup","pointercancel","pointerleave"].forEach(ev=>$("brake").addEventListener(ev,()=>brakeHeld=false));
+
+const stick=$("stick"),knob=$("knob");
+let stickActive=false;
+function moveStick(e){
+ let r=stick.getBoundingClientRect();
+ let dx=e.clientX-(r.left+r.width/2);
+ let dy=e.clientY-(r.top+r.height/2);
+ let limit=34,mag=Math.hypot(dx,dy)||1;
+ dx=dx/mag*Math.min(mag,limit);dy=dy/mag*Math.min(mag,limit);
+ knob.style.left=(33+dx)+"px";knob.style.top=(33+dy)+"px";
+ steer=dx/limit;
+ if(dx<-18)playerLane=0;
+ else if(dx>18)playerLane=2;
+ else if(Math.abs(dx)<9)playerLane=1;
+}
+stick.addEventListener("pointerdown",e=>{stickActive=true;stick.setPointerCapture(e.pointerId);moveStick(e)});
+stick.addEventListener("pointermove",e=>{if(stickActive)moveStick(e)});
+function resetStick(){stickActive=false;knob.style.left="33px";knob.style.top="33px";steer=0}
+stick.addEventListener("pointerup",resetStick);
+stick.addEventListener("pointercancel",resetStick);
+
+const wudu=[
+["Apakah maksud wuduk?","Membasuh anggota tertentu dengan niat","Mandi seluruh badan","Menyapu kasut sahaja",0,"Wuduk ialah menggunakan air pada anggota tertentu dengan niat."],
+["Apakah hukum wuduk untuk solat fardu?","Sunat","Wajib apabila berhadas","Harus sahaja",1,"Orang yang berhadas wajib berwuduk untuk menunaikan solat."],
+["Berapakah rukun wuduk?","Empat","Lima","Enam",2,"Rukun wuduk ada enam."],
+["Apakah rukun pertama wuduk?","Niat","Membasuh muka","Membasuh kaki",0,"Rukun pertama ialah niat."],
+["Apakah anggota yang dibasuh selepas muka?","Kaki","Kedua-dua tangan hingga siku","Kepala sahaja",1,"Kedua-dua tangan dibasuh hingga siku."],
+["Apakah yang disapu ketika wuduk?","Dada","Belakang","Sebahagian kepala",2,"Menyapu sebahagian kepala ialah salah satu rukun."],
+["Bilakah niat wuduk dilakukan?","Ketika membasuh muka","Selepas selesai","Sebelum tidur",0,"Niat dilakukan ketika mula membasuh muka."],
+["Apakah had basuhan muka?","Dari bahu ke dada","Dari tempat tumbuh rambut hingga dagu dan antara telinga","Dari mata ke hidung",1,"Muka dibasuh mengikut sempadan muka."],
+["Apakah anggota terakhir yang dibasuh?","Tangan","Muka","Kedua-dua kaki hingga buku lali",2,"Kedua-dua kaki dibasuh hingga buku lali."],
+["Antara berikut, apakah perkara yang membatalkan wuduk?","Keluar sesuatu dari qubul atau dubur","Memotong kuku","Membaca al-Quran",0,"Keluar sesuatu dari qubul atau dubur membatalkan wuduk."]
+];
+const solat=[
+["Apakah syarat sah solat yang berkaitan dengan hadas?","Suci daripada hadas","Memakai pakaian baharu","Solat di tempat tinggi",0,"Suci daripada hadas kecil dan besar ialah syarat sah solat."],
+["Bilakah seseorang wajib mengqadakan solat yang tertinggal kerana tertidur?","Tidak perlu qada","Apabila terjaga dan ingat","Tunggu hari Jumaat",1,"Solat yang tertinggal kerana tidur perlu ditunaikan apabila terjaga."],
+["Apakah maksud tumakninah?","Bergerak dengan cepat","Membaca dengan kuat","Berhenti seketika dengan tenang dalam rukun",2,"Tumakninah ialah ketenangan seketika dalam rukun tertentu."],
+["Apakah hukum meninggalkan rukun solat dengan sengaja?","Solat tidak sah","Solat tetap sah","Hanya kurang pahala",0,"Rukun solat tidak boleh ditinggalkan dengan sengaja."],
+["Apakah yang dilakukan jika terlupa tahiyat awal?","Batalkan solat serta-merta","Teruskan solat dan lakukan sujud sahwi mengikut ketetapan","Tambah satu rakaat",1,"Terlupa tahiyat awal ditangani dengan sujud sahwi."],
+["Apakah maksud makmum masbuk?","Imam yang lewat","Orang yang solat sendirian","Makmum yang tertinggal sebahagian rakaat bersama imam",2,"Masbuk ialah makmum yang tidak sempat bersama imam sejak awal."],
+["Bilakah takbiratul ihram dilakukan?","Pada permulaan solat","Selepas rukuk","Selepas salam",0,"Takbiratul ihram menandakan bermulanya solat."],
+["Apakah hukum bercakap dengan sengaja ketika solat?","Sunat","Membatalkan solat","Makruh sahaja",1,"Percakapan sengaja yang bukan bacaan solat membatalkan solat."],
+["Apakah maksud qasar?","Memendekkan solat empat rakaat menjadi dua","Menambah rakaat","Menggabungkan dua waktu sahaja",0,"Qasar ialah memendekkan solat empat rakaat kepada dua rakaat bagi musafir yang memenuhi syarat."],
+["Apakah maksud jamak taqdim?","Mengakhirkan dua solat","Mengganti solat lama","Menghimpunkan dua solat pada waktu solat yang pertama",2,"Jamak taqdim dilakukan dalam waktu solat yang pertama."],
+["Apakah yang dimaksudkan dengan solat berjemaah?","Solat bersama imam dan makmum","Solat seorang diri","Solat tanpa menghadap kiblat",0,"Solat berjemaah dilakukan dengan imam dan makmum."],
+["Apakah kedudukan imam berbanding makmum lelaki seorang?","Di sebelah kanan sedikit ke belakang","Di hadapan makmum","Di sebelah kiri jauh",0,"Makmum lelaki seorang berdiri di sebelah kanan imam."],
+["Jika makmum mendapati imam sedang rukuk, apakah yang perlu dilakukan?","Terus sujud","Takbiratul ihram sambil berdiri kemudian rukuk dan mengikut imam","Tunggu imam bangun",1,"Makmum masuk solat dengan takbiratul ihram dahulu, kemudian mengikut imam."],
+["Apakah maksud sujud sahwi?","Sujud kerana membaca ayat sajdah","Sujud syukur","Sujud kerana terlupa atau ragu dalam solat mengikut ketentuannya",2,"Sujud sahwi dilakukan kerana sebab tertentu berkaitan lupa atau keraguan."],
+["Apakah hukum menghadap kiblat ketika solat fardu dalam keadaan mampu?","Syarat sah","Sunat sahaja","Tidak perlu",0,"Menghadap kiblat ialah syarat sah solat bagi yang mampu."],
+["Apakah yang perlu dilakukan apabila yakin wuduk terbatal sebelum solat?","Terus solat","Berwuduk semula","Baca doa sahaja",1,"Solat memerlukan seseorang berada dalam keadaan suci daripada hadas."],
+["Apakah maksud iktidal?","Duduk antara dua sujud","Sujud kedua","Bangun tegak selepas rukuk",2,"Iktidal ialah bangun daripada rukuk dengan sempurna."],
+["Apakah yang perlu dilakukan jika tertinggal satu rukun solat?","Melengkapkan rukun tersebut mengikut keadaan dan tertibnya","Mengabaikannya","Terus memberi salam",0,"Rukun yang tertinggal perlu diperbetulkan; hukumnya bergantung pada bila disedari."],
+["Apakah hukum solat tanpa menutup aurat sedangkan mampu?","Sah","Tidak sah","Sunat",1,"Menutup aurat ialah syarat sah solat."],
+["Apakah yang dimaksudkan dengan tertib dalam rukun solat?","Membaca semua bacaan dengan kuat","Solat dengan pantas","Melakukan rukun mengikut susunan",2,"Tertib bermaksud melakukan rukun mengikut susunan yang ditetapkan."]
+];
+
+let currentQuestions=[],questionIndex=0,quizReward=0;
+function openQuiz(){
+ paused=true;
+ $("quiz").style.display="flex";
+ currentQuestions=quizWudu<10?wudu:solat;
+ questionIndex=quizWudu<10?quizWudu:quizSolat;
+ quizReward=20;
+ showQuestion();
+}
+function showQuestion(){
+ if(questionIndex>=currentQuestions.length){
+  closeQuiz();return;
+ }
+ let q=currentQuestions[questionIndex];
+ $("quizTitle").textContent=quizWudu<10?"BONUS ILMU WUDUK":"BONUS ILMU SOLAT";
+ $("question").textContent=(questionIndex+1)+". "+q[0];
+ $("answers").innerHTML="";
+ $("feedback").textContent="";
+ $("nextQ").style.display="none";
+ ["A","B","C"].forEach((letter,i)=>{
+  let btn=document.createElement("button");
+  btn.className="answer";
+  btn.textContent=letter+". "+q[i+1];
+  btn.onclick=()=>answerQuestion(i);
+  $("answers").appendChild(btn);
+ });
+ speak(q[0]+". Pilihan A, "+q[1]+". Pilihan B, "+q[2]+". Pilihan C.");
+}
+function answerQuestion(choice){
+ let q=currentQuestions[questionIndex];
+ let buttons=$("answers").querySelectorAll("button");
+ buttons.forEach(b=>b.disabled=true);
+ if(choice===q[4]){
+  $("feedback").textContent="BETUL! +20 DUIT BONUS";
+  money+=20;$("money").textContent=money;
+  playTone(850,.25);
+ }else{
+  $("feedback").textContent="Belum tepat. "+q[5];
+  speak("Jawapan yang betul ialah "+q[q[4]+1]+". "+q[5]);
+  playTone(180,.3);
+ }
+ $("nextQ").style.display="inline-block";
+}
+$("nextQ").onclick=()=>{
+ if(quizWudu<10)quizWudu++;
+ else quizSolat++;
+ questionIndex++;
+ if(quizWudu>=10&&quizSolat>=20){closeQuiz();return}
+ currentQuestions=quizWudu<10?wudu:solat;
+ questionIndex=quizWudu<10?quizWudu:quizSolat;
+ showQuestion();
+};
+function closeQuiz(){
+ $("quiz").style.display="none";paused=false;
+}
+
+function speak(text){
+ if(!("speechSynthesis" in window))return;
+ speechSynthesis.cancel();
+ let u=new SpeechSynthesisUtterance(text);
+ u.lang="ms-MY";u.rate=.88;u.pitch=1;
+ speechSynthesis.speak(u);
+}
+
+function initAudio(){
+ if(!audio){
+  audio=new (window.AudioContext||window.webkitAudioContext)();
+ }
+ if(audio.state==="suspended")audio.resume();
+}
+function playTone(freq,duration){
+ try{
+  initAudio();
+  let osc=audio.createOscillator(),gain=audio.createGain();
+  osc.type="square";osc.frequency.value=freq;
+  gain.gain.setValueAtTime(.07,audio.currentTime);
+  gain.gain.exponentialRampToValueAtTime(.001,audio.currentTime+duration);
+  osc.connect(gain);gain.connect(audio.destination);
+  osc.start();osc.stop(audio.currentTime+duration);
+ }catch(e){}
+}
+function explosion(){
+ playTone(90,.45);
+ if(navigator.vibrate)navigator.vibrate(120);
+}
+function startMusic(){
+ if(!musicOn)return;
+ initAudio();
+ if(musicTimer)return;
+ let notes=[110,147,165,196,165,147,220,196];
+ let n=0;
+ musicTimer=setInterval(()=>{
+  if(!running||paused||!musicOn)return;
+  playTone(notes[n++%notes.length],.12);
+ },210);
+}
+function stopMusic(){
+ if(musicTimer){clearInterval(musicTimer);musicTimer=null}
+}
+$("musicBtn").onclick=()=>{
+ musicOn=!musicOn;
+ $("musicBtn").textContent="🎵 MUZIK: "+(musicOn?"ON":"OFF");
+ if(musicOn)startMusic();else stopMusic();
+};
+
+$("upload").addEventListener("change",e=>{
+ let file=e.target.files[0];if(!file)return;
+ let img=new Image();
+ img.onload=()=>{faceImage=img};
+ img.src=URL.createObjectURL(file);
+ $("uploadLabel").textContent="✓ GAMBAR DIPILIH";
+});
+
+$("start").onclick=()=>{
+ initAudio();
+ $("menu").style.display="none";
+ lives=5;money=0;gold=0;passed=0;
+ generated=0;bonusGenerated=0;
+ quizWudu=0;quizSolat=0;
+ obstacles=[];bonuses=[];bullets=[];
+ distance=0;playerLane=1;
+ $("lives").textContent=lives;
+ $("money").textContent=money;
+ $("gold").textContent=gold;
+ $("passed").textContent=passed;
+ running=true;paused=false;lastTime=performance.now();
+ startMusic();
+ requestAnimationFrame(loop);
+};
+
+function render(){
+ drawRoad();
+ bonuses.forEach(drawBonus);
+ obstacles.forEach(drawObstacle);
+ drawBullets();
+ if(invincible<=0||Math.floor(performance.now()/100)%2===0)drawBike();
+}
+function loop(now){
+ if(!running)return;
+ let dt=Math.min((now-lastTime)/1000,.04);
+ lastTime=now;
+ update(dt);
+ render();
+ $("passed").textContent=passed;
+ requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
